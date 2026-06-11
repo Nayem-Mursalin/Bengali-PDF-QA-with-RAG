@@ -7,7 +7,6 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain.chains import RetrievalQA
 from langchain_core.prompts import PromptTemplate
 
 load_dotenv()
@@ -22,17 +21,14 @@ embedding_model = HuggingFaceEmbeddings(
     model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
 
-# prompt_template = """You are an AI assistant. Answer the question based on the context below.
 prompt_template = """তুমি একজন AI। নিচের context দিয়ে প্রশ্নের উত্তর দাও।
 Context থেকে উত্তর না পেলে বলো "এই তথ্য ডকুমেন্টে নেই।"
 
 Context: {context}
-প্রশ্ন: {question}
+প্রশ্ন: {input}
 উত্তর:"""
 
-PROMPT = PromptTemplate(
-    template=prompt_template, input_variables=["context", "question"]
-)
+PROMPT = PromptTemplate(template=prompt_template, input_variables=["context", "input"])
 
 qa_chain = None
 
@@ -56,14 +52,15 @@ def create_vectorstore(chunks):
 
 def create_qa_chain(vectorstore):
     retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        chain_type="stuff",
-        retriever=retriever,
-        chain_type_kwargs={"prompt": PROMPT},
-        return_source_documents=True,
-    )
-    return qa_chain
+
+    def chain(question):
+        docs = retriever.invoke(question)
+        context = "\n\n".join(doc.page_content for doc in docs)
+        prompt_text = PROMPT.format(context=context, input=question)
+        response = llm.invoke(prompt_text)
+        return response.content, docs
+
+    return chain
 
 
 def load_pdf(pdf_file):
@@ -89,9 +86,7 @@ def answer_question(question, history):
     if not question.strip():
         return history
     try:
-        result = qa_chain.invoke({"query": question})
-        answer = result["result"]
-        sources = result.get("source_documents", [])
+        answer, sources = qa_chain(question)
         if sources:
             pages = sorted(set(doc.metadata.get("page", 0) + 1 for doc in sources))
             answer += f"\n\n Pages: {pages}"
@@ -104,3 +99,30 @@ def answer_question(question, history):
             gr.ChatMessage(role="user", content=question),
             gr.ChatMessage(role="assistant", content=f"Error: {str(e)}"),
         ]
+
+
+# UI
+with gr.Blocks(title="RAG App") as demo:
+    gr.Markdown("## PDF Question Answering")
+
+    with gr.Row():
+        with gr.Column(scale=1):
+            pdf_input = gr.File(label="PDF Upload", file_types=[".pdf"])
+            load_btn = gr.Button("Load করো", variant="primary")
+            status_box = gr.Textbox(label="Status", lines=3, interactive=False)
+
+        with gr.Column(scale=2):
+            chatbot = gr.Chatbot(label="Chat", height=400)
+            question_input = gr.Textbox(label="প্রশ্ন করো")
+            with gr.Row():
+                ask_btn = gr.Button("জিজ্ঞেস করো", variant="primary")
+                clear_btn = gr.Button("Clear")
+
+    load_btn.click(fn=load_pdf, inputs=pdf_input, outputs=status_box)
+    ask_btn.click(fn=answer_question, inputs=[question_input, chatbot], outputs=chatbot)
+    question_input.submit(
+        fn=answer_question, inputs=[question_input, chatbot], outputs=chatbot
+    )
+    clear_btn.click(fn=lambda: ([], ""), outputs=[chatbot, question_input])
+
+demo.launch()
