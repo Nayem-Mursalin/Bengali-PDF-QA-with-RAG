@@ -224,7 +224,6 @@ RAG does not guarantee factual accuracy. PDF extraction, chunking, embedding qua
 
 **MD. Sayed Al Nayem**
 
-- GitHub: [Nayem-Mursalin](https://github.com/Nayem-Mursalin)
 - LinkedIn: [sayedalnayem](https://www.linkedin.com/in/sayedalnayem/)
 
 ---
